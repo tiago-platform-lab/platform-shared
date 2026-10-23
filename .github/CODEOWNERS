@@ -1,0 +1,11 @@
+# The shared Bicep and this workflow affect every department: platform team only.
+* @tiago-platform-lab/platform-team
+
+# Each department reviews its own parameter files. The org ruleset on main
+# requires code owner review, so a department cannot change another's files.
+# Add one line per department when it is added, e.g.:
+# /infra/teams/<dept>.* @tiago-platform-lab/<dept-team>
+
+# Listed last so it wins: nobody but the platform team edits ownership.
+/.github/ @tiago-platform-lab/platform-team
+/infra/main.bicep @tiago-platform-lab/platform-team

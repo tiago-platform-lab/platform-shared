@@ -1,0 +1,162 @@
+name: infra
+
+# One Bicep file, one pair of parameter files per department (infra/teams/).
+# Only the departments a change touches are deployed; a change to main.bicep or
+# to this workflow redeploys every department.
+#
+#   pull request  what-if for each affected department, dev and prod
+#   merge         deploy dev, then prod after approval, per department
+#
+# Conventions this workflow relies on:
+#   resource group   rg-<dept>-platform-<env>     (created by hand, see README)
+#   environment      <dept>-dev, <dept>-prod      (prod has required reviewers)
+#   environment var  AZURE_CLIENT_ID              (that department's deploy identity)
+#   repo var         AZURE_PLAN_CLIENT_ID         (one read-only identity for all what-ifs)
+#
+# Each deploy identity trusts only repo:<org>/<repo>:environment:<dept>-<env> and is
+# Owner only on its own resource group, so a department's run cannot touch another's.
+
+on:
+  pull_request:
+    paths: ['infra/**', '.github/workflows/infra.yml']
+  push:
+    branches: [main]
+    paths: ['infra/**', '.github/workflows/infra.yml']
+  workflow_dispatch:
+    inputs:
+      department:
+        description: 'Department to redeploy (e.g. finai), or "all"'
+        required: true
+        default: all
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: infra-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      departments: ${{ steps.pick.outputs.departments }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_DEPARTMENT: ${{ inputs.department }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # Every department that has a dev parameter file.
+          all=$(find infra/teams -name '*.dev.bicepparam' -printf '%f\n' | sed 's/\.dev\.bicepparam$//' | sort -u)
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$INPUT_DEPARTMENT" = "all" ]; then picked="$all"; else picked="$INPUT_DEPARTMENT"; fi
+          elif [ -z "${BASE:-}" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit: redeploying every department."
+            picked="$all"
+          else
+            changed=$(git diff --name-only "$BASE" "$GITHUB_SHA")
+            if grep -qE '^(infra/main\.bicep|\.github/workflows/infra\.yml)$' <<< "$changed"; then
+              picked="$all"
+            else
+              picked=$(grep -oE '^infra/teams/[a-z0-9]+' <<< "$changed" | sed 's#infra/teams/##' | sort -u || true)
+            fi
+          fi
+
+          # Only known, well-formed department names go further.
+          valid=""
+          for d in $picked; do
+            [[ "$d" =~ ^[a-z0-9]{2,10}$ ]] || { echo "Ignoring bad name '$d'"; continue; }
+            grep -qx "$d" <<< "$all" || { echo "Ignoring unknown department '$d'"; continue; }
+            valid+="$d"$'\n'
+          done
+          json=$(printf '%s' "$valid" | jq -R . | jq -cs 'map(select(length > 0))')
+          echo "departments=$json" >> "$GITHUB_OUTPUT"
+          echo "Departments: $json"
+
+  what-if:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.departments != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        department: ${{ fromJSON(needs.changes.outputs.departments) }}
+        env: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_PLAN_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: what-if ${{ matrix.department }} ${{ matrix.env }}
+        env:
+          DEPT: ${{ matrix.department }}
+          ENV_NAME: ${{ matrix.env }}
+        run: |
+          az deployment group what-if \
+            --resource-group "rg-${DEPT}-platform-${ENV_NAME}" \
+            --template-file infra/main.bicep \
+            --parameters "infra/teams/${DEPT}.${ENV_NAME}.bicepparam"
+
+  deploy-dev:
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.departments != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        department: ${{ fromJSON(needs.changes.outputs.departments) }}
+    environment: ${{ matrix.department }}-dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: deploy ${{ matrix.department }} dev
+        env:
+          DEPT: ${{ matrix.department }}
+        run: |
+          az deployment group create \
+            --name "platform-${{ github.run_id }}" \
+            --resource-group "rg-${DEPT}-platform-dev" \
+            --template-file infra/main.bicep \
+            --parameters "infra/teams/${DEPT}.dev.bicepparam" \
+            --query properties.outputs -o json
+
+  deploy-prod:
+    needs: [changes, deploy-dev]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        department: ${{ fromJSON(needs.changes.outputs.departments) }}
+    environment: ${{ matrix.department }}-prod # required reviewers: that department's leads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: deploy ${{ matrix.department }} prod
+        env:
+          DEPT: ${{ matrix.department }}
+        run: |
+          az deployment group create \
+            --name "platform-${{ github.run_id }}" \
+            --resource-group "rg-${DEPT}-platform-prod" \
+            --template-file infra/main.bicep \
+            --parameters "infra/teams/${DEPT}.prod.bicepparam" \
+            --query properties.outputs -o json
