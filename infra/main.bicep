@@ -11,9 +11,11 @@
 // The registry exists once per department, in dev, and prod pulls the same tested
 // image from it, so an image is built once and promoted rather than rebuilt.
 //
-// Creating the custom role below needs Owner or User Access Administrator on the
-// resource group, so this layer is deployed by a more privileged identity than
-// the apps are.
+// No role definitions or role assignments here: the department's deploy identity
+// is Contributor on its resource group only and cannot grant access. Apps get
+// into the environment through the one "Container Apps Environment Joiner" role,
+// defined once at tier 0 and assigned by the vending workflow
+// (platform-vending/bootstrap/tier0.bicep, infra/modules/platform-access.bicep).
 
 targetScope = 'resourceGroup'
 
@@ -82,30 +84,6 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (createReg
   }
 }
 
-// Lets an app's deploy identity place a Container App in this environment without
-// Contributor on the shared environment itself.
-// platform-vending recomputes this GUID (modules/platform-access.bicep): keep the
-// name expression as is.
-resource caeJoinerRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
-  name: guid(resourceGroup().id, 'cae-joiner')
-  properties: {
-    roleName: 'Container Apps Environment Joiner (${team}-${env})'
-    description: 'Deploy Container Apps and Jobs into the shared environment.'
-    type: 'CustomRole'
-    permissions: [
-      {
-        actions: [
-          'Microsoft.App/managedEnvironments/read'
-          'Microsoft.App/managedEnvironments/join/action'
-        ]
-        notActions: []
-      }
-    ]
-    assignableScopes: [resourceGroup().id]
-  }
-}
-
 output containerAppsEnvironmentName string = cae.name
 output containerAppsEnvironmentId string = cae.id
 output registryLoginServer string = createRegistry ? acr!.properties.loginServer : ''
-output caeJoinerRoleName string = caeJoinerRole.name // a GUID; referenced with subscriptionResourceId()

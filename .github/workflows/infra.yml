@@ -8,13 +8,14 @@ name: infra
 #   merge         deploy dev, then prod after approval, per department
 #
 # Conventions this workflow relies on:
-#   resource group   rg-<dept>-platform-<env>     (created by hand, see README)
+#   resource group   rg-<dept>-platform-<env>     (platform-vending infra/department.bicep)
 #   environment      <dept>-dev, <dept>-prod      (prod has required reviewers)
 #   environment var  AZURE_CLIENT_ID              (that department's deploy identity)
-#   repo var         AZURE_PLAN_CLIENT_ID         (one read-only identity for all what-ifs)
+#   repo var         AZURE_PLAN_CLIENT_ID         (id-platform-plan: What-If Reader, all what-ifs)
 #
 # Each deploy identity trusts only repo:<org>/<repo>:environment:<dept>-<env> and is
-# Owner only on its own resource group, so a department's run cannot touch another's.
+# Contributor only on its own resource group, so a department's run cannot touch
+# another's, and cannot grant roles.
 
 on:
   pull_request:
@@ -43,7 +44,7 @@ jobs:
     outputs:
       departments: ${{ steps.pick.outputs.departments }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: pick
@@ -92,8 +93,8 @@ jobs:
         department: ${{ fromJSON(needs.changes.outputs.departments) }}
         env: [dev, prod]
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_PLAN_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -103,7 +104,9 @@ jobs:
           DEPT: ${{ matrix.department }}
           ENV_NAME: ${{ matrix.env }}
         run: |
+          # ProviderNoRbac: check read access, not write; the plan identity only reads.
           az deployment group what-if \
+            --validation-level ProviderNoRbac \
             --resource-group "rg-${DEPT}-platform-${ENV_NAME}" \
             --template-file infra/main.bicep \
             --parameters "infra/teams/${DEPT}.${ENV_NAME}.bicepparam"
@@ -118,8 +121,8 @@ jobs:
         department: ${{ fromJSON(needs.changes.outputs.departments) }}
     environment: ${{ matrix.department }}-dev
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -144,8 +147,8 @@ jobs:
         department: ${{ fromJSON(needs.changes.outputs.departments) }}
     environment: ${{ matrix.department }}-prod # required reviewers: that department's leads
     steps:
-      - uses: actions/checkout@v4
-      - uses: azure/login@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
