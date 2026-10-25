@@ -4,6 +4,8 @@ The resources every app of a department reuses, one set per department and
 environment. One Bicep file serves every department; each department is two
 parameter files.
 
+How the whole platform works: [platform overview](https://github.com/tiago-platform-lab/platform-vending/blob/main/docs/README.md).
+
 | Resource | Name | Notes |
 |---|---|---|
 | Log Analytics | `log-<dept>-<env>` | 30-day retention |
@@ -43,9 +45,13 @@ but not change anything, and cannot read logs or images.
 
 ## Adding a department
 
-See platform-vending's README ("Adding a department"). In this repo it is one pull
+Full steps: [platform overview, "Adding a department"](https://github.com/tiago-platform-lab/platform-vending/blob/main/docs/README.md#b-adding-a-department).
+Before the pull request, the department's resource groups and identities must exist
+(`department.bicep` in platform-vending) and so must the environments `<dept>-dev`
+and `<dept>-prod` in this repo, with `AZURE_CLIENT_ID`. In this repo it is one pull
 request: copy two files into `infra/teams/` (set `team`: lowercase letters and
-digits, max 10), and add the department's team to CODEOWNERS.
+digits, max 10), and add the department's team to CODEOWNERS. Then add the
+department to `platform.yaml` in platform-vending so apps can be vended into it.
 
 ## Repo variables
 
