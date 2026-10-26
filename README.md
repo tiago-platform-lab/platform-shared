@@ -10,7 +10,7 @@ How the whole platform works: [platform overview](https://github.com/tiago-platf
 |---|---|---|
 | Log Analytics | `log-<dept>-<env>` | 30-day retention |
 | Container Apps environment | `cae-<dept>-<env>` | Consumption, no VNet (yet) |
-| Container registry | `cr<dept>shared` | Dev only; prod pulls the same image. No admin user. SKU per department (`registrySku`) |
+| Container registry | `cr<dept>shared` | Dev only; prod pulls the same image. No admin user. ABAC repository permissions: each app reaches only its own repository. SKU per department (`registrySku`) |
 
 Apps never create these; they reference them as `existing`. Apps get into the
 environment through the tier-0 "Container Apps Environment Joiner" role, assigned
