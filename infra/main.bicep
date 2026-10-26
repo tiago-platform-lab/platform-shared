@@ -73,7 +73,7 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (createRegistry) {
+resource acr 'Microsoft.ContainerRegistry/registries@2025-11-01' = if (createRegistry) {
   name: registryName
   location: location
   tags: tags
@@ -81,6 +81,11 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (createReg
   properties: {
     adminUserEnabled: false // pull and push by identity only
     publicNetworkAccess: 'Enabled'
+    // Repository permissions (ABAC): each app's identities get Container Registry
+    // Repository Reader/Writer with a condition on their own repository, so one
+    // app cannot read or overwrite another app's images. AcrPull/AcrPush are not
+    // honoured in this mode (vending assigns the repository roles).
+    roleAssignmentMode: 'AbacRepositoryPermissions'
   }
 }
 
